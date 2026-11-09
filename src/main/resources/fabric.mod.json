@@ -1,0 +1,38 @@
+{
+	"schemaVersion": 1,
+	"id": "chunktwitch",
+	"version": "${version}",
+	"name": "chunktwitch",
+	"description": "This is an example description! Tell everyone what your mod is about!",
+	"authors": [
+		"Me!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/chunktwitch/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"com.example.chunktwitch.Chunktwitch"
+		],
+		"client": [
+			"com.example.chunktwitch.client.ChunktwitchClient"
+		]
+	},
+	"mixins": [
+		"chunktwitch.mixins.json",
+		{
+			"config": "chunktwitch.client.mixins.json",
+			"environment": "client"
+		}
+	],
+	"depends": {
+		"fabricloader": ">=0.20.1",
+		"minecraft": "~26.2",
+		"java": ">=25",
+		"fabric-api": "*"
+	}
+}
