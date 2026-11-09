@@ -37,7 +37,7 @@ import java.util.regex.Pattern;
  *
  * Connect with:  /chunktwitch connect <yourchannel>
  */
-public class ChunkTwitch implements ModInitializer {
+public class Chunktwitch implements ModInitializer {
 
     record Entry(String user, Block block) {}
 
