@@ -155,20 +155,21 @@ static final ServerBossEvent BAR = new ServerBossEvent(
             return; // one chunk per tick
         }
     }
-
-    void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
-        BlockState state = block.defaultBlockState();
-        BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
-        int minY = level.getMinY();
-        for (int y = minY; y <= topY; y++) {
-            for (int x = cx * 16; x < cx * 16 + 16; x++) {
-                for (int z = cz * 16; z < cz * 16 + 16; z++) {
-                    level.setBlock(pos.set(x, y, z), state, 2);
-                }
+void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
+    BlockState state = block.defaultBlockState();
+    BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+    int minY = level.getMinY();
+    int maxY = level.getMaxY();
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = cx * 16; x < cx * 16 + 16; x++) {
+            for (int z = cz * 16; z < cz * 16 + 16; z++) {
+                pos.set(x, y, z);
+                if (level.getBlockState(pos).isAir()) continue;
+                level.setBlock(pos, state, 2);
             }
         }
     }
-
+}
     void runCommand(MinecraftServer server, String command) {
         try {
             server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), command);
