@@ -19,6 +19,7 @@ import net.minecraft.world.BossEvent;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
+import net.minecraft.world.level.levelgen.Heightmap;
 
 import java.io.*;
 import java.net.Socket;
@@ -160,12 +161,19 @@ void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
-    for (int y = minY; y <= maxY; y++) {
-        for (int x = cx * 16; x < cx * 16 + 16; x++) {
-            for (int z = cz * 16; z < cz * 16 + 16; z++) {
+    for (int x = cx * 16; x < cx * 16 + 16; x++) {
+        for (int z = cz * 16; z < cz * 16 + 16; z++) {
+            // height of the ground in this column (ignores leaves)
+            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            for (int y = minY; y <= maxY; y++) {
                 pos.set(x, y, z);
-                if (level.getBlockState(pos).isAir()) continue;
-                level.setBlock(pos, state, 2);
+                BlockState current = level.getBlockState(pos);
+                if (current.is(net.minecraft.world.level.block.Blocks.BEDROCK)) continue;
+                // below the surface: fill everything, caves included
+                // above the surface: only replace blocks that exist (trees, leaves)
+                if (y < surface || !current.isAir()) {
+                    level.setBlock(pos, state, 2);
+                }
             }
         }
     }
