@@ -53,10 +53,11 @@ public class Chunktwitch implements ModInitializer {
     static final Set<String> DONE = new HashSet<>();
     static final Map<String, Block> BLOCKS_BY_NAME = new HashMap<>();
 
-    static final ServerBossEvent BAR = new ServerBossEvent(
-            Component.literal("0 Chunk(s) waiting!"),
-            BossEvent.BossBarColor.PURPLE,
-            BossEvent.BossBarOverlay.PROGRESS);
+static final ServerBossEvent BAR = new ServerBossEvent(
+        java.util.UUID.randomUUID(),
+        Component.literal("0 Chunk(s) waiting!"),
+        BossEvent.BossBarColor.PURPLE,
+        BossEvent.BossBarOverlay.PROGRESS);
 
     static volatile int generation = 0;
     static volatile Socket currentSocket = null;
