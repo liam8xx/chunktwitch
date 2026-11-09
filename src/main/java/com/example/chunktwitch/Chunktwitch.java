@@ -154,6 +154,7 @@ static final ServerBossEvent BAR = new ServerBossEvent(
     }
 void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
     BlockState state = block.defaultBlockState();
+    BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
@@ -161,8 +162,26 @@ void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
         for (int x = cx * 16; x < cx * 16 + 16; x++) {
             for (int z = cz * 16; z < cz * 16 + 16; z++) {
                 pos.set(x, y, z);
-                if (level.getBlockState(pos).isAir()) continue;
-                level.setBlock(pos, state, 2 | 16 | 32);
+                BlockState current = level.getBlockState(pos);
+
+                if (current.isAir()) continue;
+                if (current.is(net.minecraft.world.level.block.Blocks.BEDROCK)) continue;
+
+                Block currentBlock = current.getBlock();
+                boolean solid = current.isCollisionShapeFullBlock(
+                        net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO)
+                        || currentBlock instanceof net.minecraft.world.level.block.SlabBlock
+                        || currentBlock instanceof net.minecraft.world.level.block.StairBlock
+                        || currentBlock instanceof net.minecraft.world.level.block.FenceBlock;
+                boolean fluid = !current.getFluidState().isEmpty();
+
+                if (solid || fluid) {
+                    // real blocks, slabs, stairs, fences and water/lava become the viewer's block
+                    level.setBlock(pos, state, 2 | 16 | 32);
+                } else {
+                    // torches, trapdoors, flowers, grass, leaf litter, snow layers... just vanish
+                    level.setBlock(pos, air, 2 | 16 | 32);
+                }
             }
         }
     }
