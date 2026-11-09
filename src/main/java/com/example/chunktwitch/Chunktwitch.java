@@ -279,4 +279,7 @@ static Block resolveBlock(String text) {
     }
     return null;
 }
+static boolean isSafe(Block b) {
+    return true;
+}
 }
