@@ -42,11 +42,7 @@ public class Chunktwitch implements ModInitializer {
 
     record Entry(String user, Block block) {}
 
-    static final Set<String> BLOCKED = Set.of(
-            "bedrock", "barrier", "command_block", "chain_command_block", "repeating_command_block",
-            "structure_block", "structure_void", "jigsaw", "light", "end_portal", "end_portal_frame",
-            "nether_portal", "end_gateway", "lava", "water", "tnt", "air", "cave_air", "void_air",
-            "spawner", "trial_spawner", "vault", "reinforced_deepslate", "moving_piston");
+static final Set<String> BLOCKED = Set.of();
 
     static final Pattern CHAT = Pattern.compile("^:(\\w+)!\\S+ PRIVMSG #\\S+ :!chunk\\s+(.+)$");
 
@@ -161,19 +157,12 @@ void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
-    for (int x = cx * 16; x < cx * 16 + 16; x++) {
-        for (int z = cz * 16; z < cz * 16 + 16; z++) {
-            // height of the ground in this column (ignores leaves)
-            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-            for (int y = minY; y <= maxY; y++) {
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = cx * 16; x < cx * 16 + 16; x++) {
+            for (int z = cz * 16; z < cz * 16 + 16; z++) {
                 pos.set(x, y, z);
-                BlockState current = level.getBlockState(pos);
-                if (current.is(net.minecraft.world.level.block.Blocks.BEDROCK)) continue;
-                // below the surface: fill everything, caves included
-                // above the surface: only replace blocks that exist (trees, leaves)
-                if (y < surface || !current.isAir()) {
-                    level.setBlock(pos, state, 2);
-                }
+                if (level.getBlockState(pos).isAir()) continue;
+                level.setBlock(pos, state, 2 | 16 | 32);
             }
         }
     }
@@ -279,15 +268,15 @@ void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
         QUEUE.add(new Entry(user, block));
     }
 
-    static Block resolveBlock(String text) {
-        String n = text.replace(' ', '_');
-        if (n.startsWith("block_of_")) n = n.substring("block_of_".length()) + "_block";
+static Block resolveBlock(String text) {
+    String n = text.replace(' ', '_');
+    if (n.startsWith("block_of_")) n = n.substring("block_of_".length()) + "_block";
 
-        for (String candidate : new String[] { n, n + "_block" }) {
-            if (BLOCKED.contains(candidate)) return null;
-            Block b = BLOCKS_BY_NAME.get(candidate);
-            if (b != null) return b;
-        }
-        return null;
+    for (String candidate : new String[] { n, n + "_block" }) {
+        if (BLOCKED.contains(candidate)) return null;
+        Block b = BLOCKS_BY_NAME.get(candidate);
+        if (b != null) return isSafe(b) ? b : null;
     }
+    return null;
+}
 }
