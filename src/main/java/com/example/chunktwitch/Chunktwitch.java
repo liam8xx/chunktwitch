@@ -1,6 +1,7 @@
 package com.example.chunktwitch;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
+import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v2.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
@@ -120,7 +121,8 @@ static final ServerBossEvent BAR = new ServerBossEvent(
         }
 
         // scoreboard (errors if it already exists, which is fine)
-        runCommand(server, "scoreboard objectives add chunks dummy \"Chunks Changed\"");
+        runQuiet(server, "scoreboard objectives add chunks dummy \"Chunks Owned\"");
+        runCommand(server, "scoreboard objectives modify chunks displayname \"Chunks Owned\"");
         runCommand(server, "scoreboard objectives setdisplay sidebar chunks");
 
         QUEUE.clear();
@@ -144,79 +146,117 @@ void onTick(MinecraftServer server) {
         int cz = player.getBlockZ() >> 4;
         String key = level.dimension() + ":" + cx + "," + cz;
 
-        // remember where the player is; only react when they move into a different chunk
         String previous = LAST_CHUNK.put(player.getUUID(), key);
         if (previous == null || previous.equals(key)) continue;
-
         if (DONE.contains(key)) continue;
 
         Entry e = QUEUE.poll();
         if (e == null) continue;
 
-        fillChunk(level, cx, cz, player.getBlockY() - 1, e.block());
+        // find the ground under the player BEFORE filling
+        int surfaceAtPlayer = level.getHeight(
+                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ());
+        boolean underground = player.getBlockY() < surfaceAtPlayer;
+
+        fillChunk(level, cx, cz, e.block());
         DONE.add(key);
         appendDone(key);
         runCommand(server, "scoreboard players add " + e.user() + " chunks 1");
+
+        if (underground) liftToSurface(server, level, player, surfaceAtPlayer);
         announce(server, player, e.user(), e.block());
     }
 }
-void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
+
+void liftToSurface(MinecraftServer server, ServerLevel level, ServerPlayer player, int surface) {
+    int x = player.getBlockX();
+    int z = player.getBlockZ();
+    BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+    int y = Math.max(surface, level.getMinY());
+    int maxY = level.getMaxY();
+    // go up until there are two free blocks (feet + head), so trees don't trap you
+    while (y < maxY) {
+        boolean feet = level.getBlockState(pos.set(x, y, z)).isAir();
+        boolean head = level.getBlockState(pos.set(x, y + 1, z)).isAir();
+        if (feet && head) break;
+        y++;
+    }
+    // same exact x and z, only y changes
+    runCommand(server, "tp " + player.getUUID() + " " + fmt(player.getX()) + " " + y + " " + fmt(player.getZ()));
+}
+
+static String fmt(double d) {
+    return String.format(Locale.ROOT, "%.3f", d);
+}
+void fillChunk(ServerLevel level, int cx, int cz, Block block) {
     BlockState state = block.defaultBlockState();
     BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
-    for (int y = minY; y <= maxY; y++) {
-        for (int x = cx * 16; x < cx * 16 + 16; x++) {
-            for (int z = cz * 16; z < cz * 16 + 16; z++) {
+    for (int x = cx * 16; x < cx * 16 + 16; x++) {
+        for (int z = cz * 16; z < cz * 16 + 16; z++) {
+            // first free block above the ground in this column (ignores leaves)
+            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            for (int y = minY; y <= maxY; y++) {
                 pos.set(x, y, z);
                 BlockState current = level.getBlockState(pos);
-
-                if (current.isAir()) continue;
                 if (current.is(net.minecraft.world.level.block.Blocks.BEDROCK)) continue;
 
-                Block currentBlock = current.getBlock();
+                // underground: fill everything, caves and air pockets included
+                if (y < surface) {
+                    level.setBlock(pos, state, 2 | 16 | 32);
+                    continue;
+                }
+
+                // at or above the ground: only touch blocks that exist
+                if (current.isAir()) continue;
+
+                Block cb = current.getBlock();
                 boolean solid = current.isCollisionShapeFullBlock(
                         net.minecraft.world.level.EmptyBlockGetter.INSTANCE, BlockPos.ZERO)
-                        || currentBlock instanceof net.minecraft.world.level.block.SlabBlock
-                        || currentBlock instanceof net.minecraft.world.level.block.StairBlock
-                        || currentBlock instanceof net.minecraft.world.level.block.FenceBlock;
+                        || cb instanceof net.minecraft.world.level.block.SlabBlock
+                        || cb instanceof net.minecraft.world.level.block.StairBlock
+                        || cb instanceof net.minecraft.world.level.block.FenceBlock;
                 boolean fluid = !current.getFluidState().isEmpty();
 
-                if (solid || fluid) {
-                    // real blocks, slabs, stairs, fences and water/lava become the viewer's block
-                    level.setBlock(pos, state, 2 | 16 | 32);
-                } else {
-                    // torches, trapdoors, flowers, grass, leaf litter, snow layers... just vanish
-                    level.setBlock(pos, air, 2 | 16 | 32);
-                }
+                // blocks, slabs, stairs, fences, leaves and fluids become the viewer's block;
+                // torches, trapdoors, plants, leaf litter etc. vanish
+                level.setBlock(pos, (solid || fluid) ? state : air, 2 | 16 | 32);
             }
         }
     }
 }
-    void announce(MinecraftServer server, ServerPlayer player, String user, Block block) {
+void announce(MinecraftServer server, ServerPlayer player, String user, Block block) {
     var id = BuiltInRegistries.BLOCK.getKey(block);
     String blockKey = "block." + id.getNamespace() + "." + id.getPath();
     String target = player.getUUID().toString();
 
-    // "(user) changed the chunk to (block)": user yellow, block green, rest white
     String subtitle = "[{\"text\":\"" + user + "\",\"color\":\"yellow\"},"
             + "{\"text\":\" changed the chunk to \",\"color\":\"white\"},"
             + "{\"translate\":\"" + blockKey + "\",\"color\":\"green\"}]";
 
     runCommand(server, "title " + target + " times 10 60 20");
     runCommand(server, "title " + target + " subtitle " + subtitle);
-    runCommand(server, "title " + target + " title {\"text\":\"\"}");
+    runCommand(server, "title " + target + " title {\"text\":\" \"}");
     runCommand(server, "execute at " + target + " run playsound minecraft:item.totem.use master "
             + target + " ~ ~ ~ 1 1");
 }
-    void runCommand(MinecraftServer server, String command) {
-        try {
-            server.getCommands().performPrefixedCommand(server.createCommandSourceStack(), command);
-        } catch (Exception e) {
-            System.err.println("[ChunkTwitch] command failed: " + command + " -> " + e);
-        }
+void runCommand(MinecraftServer server, String command) {
+    try {
+        server.getCommands().getDispatcher().execute(command, server.createCommandSourceStack());
+    } catch (Exception e) {
+        String msg = "[ChunkTwitch] command failed: " + command + " -> " + e.getMessage();
+        System.err.println(msg);
+        server.getPlayerList().broadcastSystemMessage(Component.literal(msg), false);
     }
+}
+
+void runQuiet(MinecraftServer server, String command) {
+    try {
+        server.getCommands().getDispatcher().execute(command, server.createCommandSourceStack());
+    } catch (Exception ignored) {}
+}
 
     // ---------------------------------------------------------------- files
 
