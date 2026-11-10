@@ -230,7 +230,7 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
 void announce(MinecraftServer server, ServerPlayer player, String user, Block block) {
     var id = BuiltInRegistries.BLOCK.getKey(block);
     String blockKey = "block." + id.getNamespace() + "." + id.getPath();
-    String target = player.getUUID().toString();
+    String target = player.getName().getString(); // player name instead of UUID
 
     String subtitle = "[{\"text\":\"" + user + "\",\"color\":\"yellow\"},"
             + "{\"text\":\" changed the chunk to \",\"color\":\"white\"},"
