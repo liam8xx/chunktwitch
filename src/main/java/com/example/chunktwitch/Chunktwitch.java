@@ -102,6 +102,7 @@ static final ServerBossEvent BAR = new ServerBossEvent(
     // ---------------------------------------------------------------- server
 
     void onServerStarted(MinecraftServer server) {
+        runCommand(server, "scoreboard objectives modify chunks numberformat styled {\"color\":\"red\"}");
         // block name lookup table
         if (BLOCKS_BY_NAME.isEmpty()) {
             for (Block b : BuiltInRegistries.BLOCK) {
@@ -156,6 +157,7 @@ void onTick(MinecraftServer server) {
         DONE.add(key);
         appendDone(key);
         runCommand(server, "scoreboard players add " + e.user() + " chunks 1");
+        announce(server, player, e.user(), e.block());
     }
 }
 void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
@@ -191,6 +193,22 @@ void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
             }
         }
     }
+}
+    void announce(MinecraftServer server, ServerPlayer player, String user, Block block) {
+    var id = BuiltInRegistries.BLOCK.getKey(block);
+    String blockKey = "block." + id.getNamespace() + "." + id.getPath();
+    String target = player.getUUID().toString();
+
+    // "(user) changed the chunk to (block)": user yellow, block green, rest white
+    String subtitle = "[{\"text\":\"" + user + "\",\"color\":\"yellow\"},"
+            + "{\"text\":\" changed the chunk to \",\"color\":\"white\"},"
+            + "{\"translate\":\"" + blockKey + "\",\"color\":\"green\"}]";
+
+    runCommand(server, "title " + target + " times 10 60 20");
+    runCommand(server, "title " + target + " subtitle " + subtitle);
+    runCommand(server, "title " + target + " title {\"text\":\"\"}");
+    runCommand(server, "execute at " + target + " run playsound minecraft:item.totem.use master "
+            + target + " ~ ~ ~ 1 1");
 }
     void runCommand(MinecraftServer server, String command) {
         try {
