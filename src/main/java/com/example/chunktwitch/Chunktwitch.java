@@ -60,6 +60,7 @@ static final ServerBossEvent BAR = new ServerBossEvent(
     static volatile Socket currentSocket = null;
     static Path donePath = null;
     static int lastQueueSize = -1;
+    static final Map<UUID, String> LAST_CHUNK = new HashMap<>();
 
     @Override
     public void onInitialize() {
@@ -90,7 +91,10 @@ static final ServerBossEvent BAR = new ServerBossEvent(
         });
 
         ServerPlayConnectionEvents.JOIN.register((handler, sender, server) -> BAR.addPlayer(handler.player));
-        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> BAR.removePlayer(handler.player));
+        ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+    BAR.removePlayer(handler.player);
+    LAST_CHUNK.remove(handler.player.getUUID());
+});
 
         ServerTickEvents.END_SERVER_TICK.register(this::onTick);
     }
@@ -125,33 +129,35 @@ static final ServerBossEvent BAR = new ServerBossEvent(
         String channel = loadChannel();
         if (channel != null) startTwitch(channel);
     }
-
-    void onTick(MinecraftServer server) {
-        int size = QUEUE.size();
-        if (size != lastQueueSize) {
-            lastQueueSize = size;
-            BAR.setName(Component.literal(size + " Chunk(s) waiting!"));
-            BAR.setProgress(size == 0 ? 0f : Math.min(1f, size / 10f));
-        }
-        if (size == 0) return;
-
-        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
-            ServerLevel level = (ServerLevel) player.level();
-            int cx = player.getBlockX() >> 4;
-            int cz = player.getBlockZ() >> 4;
-            String key = level.dimension() + ":" + cx + "," + cz;
-            if (DONE.contains(key)) continue;
-
-            Entry e = QUEUE.poll();
-            if (e == null) return;
-
-            fillChunk(level, cx, cz, player.getBlockY() - 1, e.block());
-            DONE.add(key);
-            appendDone(key);
-            runCommand(server, "scoreboard players add " + e.user() + " chunks 1");
-            return; // one chunk per tick
-        }
+void onTick(MinecraftServer server) {
+    int size = QUEUE.size();
+    if (size != lastQueueSize) {
+        lastQueueSize = size;
+        BAR.setName(Component.literal(size + " Chunk(s) waiting!"));
+        BAR.setProgress(size == 0 ? 0f : Math.min(1f, size / 10f));
     }
+
+    for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+        ServerLevel level = (ServerLevel) player.level();
+        int cx = player.getBlockX() >> 4;
+        int cz = player.getBlockZ() >> 4;
+        String key = level.dimension() + ":" + cx + "," + cz;
+
+        // remember where the player is; only react when they move into a different chunk
+        String previous = LAST_CHUNK.put(player.getUUID(), key);
+        if (previous == null || previous.equals(key)) continue;
+
+        if (DONE.contains(key)) continue;
+
+        Entry e = QUEUE.poll();
+        if (e == null) continue;
+
+        fillChunk(level, cx, cz, player.getBlockY() - 1, e.block());
+        DONE.add(key);
+        appendDone(key);
+        runCommand(server, "scoreboard players add " + e.user() + " chunks 1");
+    }
+}
 void fillChunk(ServerLevel level, int cx, int cz, int topY, Block block) {
     BlockState state = block.defaultBlockState();
     BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
