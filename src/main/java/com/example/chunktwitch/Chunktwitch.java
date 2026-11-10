@@ -230,15 +230,13 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
 void announce(MinecraftServer server, ServerPlayer player, String user, Block block) {
     var id = BuiltInRegistries.BLOCK.getKey(block);
     String blockKey = "block." + id.getNamespace() + "." + id.getPath();
-    String target = player.getName().getString(); // player name instead of UUID
+    String target = player.getName().getString();
 
-    String subtitle = "[{\"text\":\"" + user + "\",\"color\":\"yellow\"},"
+    String text = "[{\"text\":\"" + user + "\",\"color\":\"yellow\"},"
             + "{\"text\":\" changed the chunk to \",\"color\":\"white\"},"
             + "{\"translate\":\"" + blockKey + "\",\"color\":\"green\"}]";
 
-    runCommand(server, "title " + target + " times 10 60 20");
-    runCommand(server, "title " + target + " subtitle " + subtitle);
-    runCommand(server, "title " + target + " title {\"text\":\" \"}");
+    runCommand(server, "title " + target + " actionbar " + text);
     runCommand(server, "execute at " + target + " run playsound minecraft:item.totem.use master "
             + target + " ~ ~ ~ 1 1");
 }
