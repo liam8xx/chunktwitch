@@ -156,11 +156,10 @@ void onTick(MinecraftServer server) {
         Entry e = QUEUE.poll();
         if (e == null) continue;
 
-        // only the Overworld has a "surface" to lift the player to
+        // only the Overworld lifts the player to the surface
         boolean overworld = level.dimension().equals(Level.OVERWORLD);
-        int surfaceAtPlayer = overworld
-                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ())
-                : 0;
+        int surfaceAtPlayer = level.getHeight(
+                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ());
         boolean underground = overworld && player.getBlockY() < surfaceAtPlayer;
 
         fillChunk(level, cx, cz, e.block());
@@ -200,39 +199,33 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
     int maxY = level.getMaxY();
     boolean overworld = level.dimension().equals(Level.OVERWORLD);
 
-    // Nether/End: leave a 2-block pocket where each player stands so nobody suffocates
+    // Nether/End: keep a 2-block pocket where each player stands, since they aren't teleported out
     Set<Long> keepFree = new HashSet<>();
-    for (ServerPlayer p : level.players()) {
-        if ((p.getBlockX() >> 4) == cx && (p.getBlockZ() >> 4) == cz) {
-            keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY(), p.getBlockZ()));
-            keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY() + 1, p.getBlockZ()));
+    if (!overworld) {
+        for (ServerPlayer p : level.players()) {
+            if ((p.getBlockX() >> 4) == cx && (p.getBlockZ() >> 4) == cz) {
+                keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY(), p.getBlockZ()));
+                keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY() + 1, p.getBlockZ()));
+            }
         }
     }
 
     for (int x = cx * 16; x < cx * 16 + 16; x++) {
         for (int z = cz * 16; z < cz * 16 + 16; z++) {
-            int surface = overworld
-                    ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z)
-                    : minY;
+            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
             for (int y = minY; y <= maxY; y++) {
                 pos.set(x, y, z);
                 BlockState current = level.getBlockState(pos);
                 if (current.is(Blocks.BEDROCK)) continue;
+                if (keepFree.contains(pos.asLong())) continue;
 
-                // Nether, End and other dimensions: fill everything, air included
-                if (!overworld) {
-                    if (keepFree.contains(pos.asLong())) continue;
-                    level.setBlock(pos, state, PLACE_FLAGS);
-                    continue;
-                }
-
-                // Overworld underground: fill everything, caves included
+                // below the ground: fill everything, caves and air pockets included
                 if (y < surface) {
                     level.setBlock(pos, state, PLACE_FLAGS);
                     continue;
                 }
 
-                // Overworld at or above the ground: only touch what exists
+                // at or above the ground: air is never changed
                 if (current.isAir()) continue;
 
                 Block cb = current.getBlock();
