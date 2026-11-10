@@ -21,6 +21,8 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.levelgen.Heightmap;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Blocks;
 
 import java.io.*;
 import java.net.Socket;
@@ -62,6 +64,7 @@ static final ServerBossEvent BAR = new ServerBossEvent(
     static Path donePath = null;
     static int lastQueueSize = -1;
     static final Map<UUID, String> LAST_CHUNK = new HashMap<>();
+    static final int PLACE_FLAGS = 2 | 16 | 32 | 512;
 
     @Override
     public void onInitialize() {
@@ -153,10 +156,12 @@ void onTick(MinecraftServer server) {
         Entry e = QUEUE.poll();
         if (e == null) continue;
 
-        // find the ground under the player BEFORE filling
-        int surfaceAtPlayer = level.getHeight(
-                Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ());
-        boolean underground = player.getBlockY() < surfaceAtPlayer;
+        // only the Overworld has a "surface" to lift the player to
+        boolean overworld = level.dimension().equals(Level.OVERWORLD);
+        int surfaceAtPlayer = overworld
+                ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ())
+                : 0;
+        boolean underground = overworld && player.getBlockY() < surfaceAtPlayer;
 
         fillChunk(level, cx, cz, e.block());
         DONE.add(key);
@@ -167,7 +172,6 @@ void onTick(MinecraftServer server) {
         announce(server, player, e.user(), e.block());
     }
 }
-
 void liftToSurface(MinecraftServer server, ServerLevel level, ServerPlayer player, int surface) {
     int x = player.getBlockX();
     int z = player.getBlockZ();
@@ -190,26 +194,45 @@ static String fmt(double d) {
 }
 void fillChunk(ServerLevel level, int cx, int cz, Block block) {
     BlockState state = block.defaultBlockState();
-    BlockState air = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+    BlockState air = Blocks.AIR.defaultBlockState();
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
+    boolean overworld = level.dimension().equals(Level.OVERWORLD);
+
+    // Nether/End: leave a 2-block pocket where each player stands so nobody suffocates
+    Set<Long> keepFree = new HashSet<>();
+    for (ServerPlayer p : level.players()) {
+        if ((p.getBlockX() >> 4) == cx && (p.getBlockZ() >> 4) == cz) {
+            keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY(), p.getBlockZ()));
+            keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY() + 1, p.getBlockZ()));
+        }
+    }
+
     for (int x = cx * 16; x < cx * 16 + 16; x++) {
         for (int z = cz * 16; z < cz * 16 + 16; z++) {
-            // first free block above the ground in this column (ignores leaves)
-            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
+            int surface = overworld
+                    ? level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z)
+                    : minY;
             for (int y = minY; y <= maxY; y++) {
                 pos.set(x, y, z);
                 BlockState current = level.getBlockState(pos);
-                if (current.is(net.minecraft.world.level.block.Blocks.BEDROCK)) continue;
+                if (current.is(Blocks.BEDROCK)) continue;
 
-                // underground: fill everything, caves and air pockets included
-                if (y < surface) {
-                    level.setBlock(pos, state, 2 | 16 | 32);
+                // Nether, End and other dimensions: fill everything, air included
+                if (!overworld) {
+                    if (keepFree.contains(pos.asLong())) continue;
+                    level.setBlock(pos, state, PLACE_FLAGS);
                     continue;
                 }
 
-                // at or above the ground: only touch blocks that exist
+                // Overworld underground: fill everything, caves included
+                if (y < surface) {
+                    level.setBlock(pos, state, PLACE_FLAGS);
+                    continue;
+                }
+
+                // Overworld at or above the ground: only touch what exists
                 if (current.isAir()) continue;
 
                 Block cb = current.getBlock();
@@ -220,9 +243,7 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
                         || cb instanceof net.minecraft.world.level.block.FenceBlock;
                 boolean fluid = !current.getFluidState().isEmpty();
 
-                // blocks, slabs, stairs, fences, leaves and fluids become the viewer's block;
-                // torches, trapdoors, plants, leaf litter etc. vanish
-                level.setBlock(pos, (solid || fluid) ? state : air, 2 | 16 | 32);
+                level.setBlock(pos, (solid || fluid) ? state : air, PLACE_FLAGS);
             }
         }
     }
