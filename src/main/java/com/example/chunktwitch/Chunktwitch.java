@@ -546,16 +546,6 @@ static void startConnect() {
         out.flush();
     }
 
-    static void handleChat(String user, String raw) {
-        String text = raw.trim().toLowerCase(Locale.ROOT);
-        if (text.isEmpty() || !text.matches("[a-z0-9_ ]+")) return;
-
-        Block block = resolveBlock(text);
-        if (block == null) return;
-
-        QUEUE.add(new Entry(user, block));
-    }
-
 static Block resolveBlock(String text) {
     String n = text.replace(' ', '_');
     if (n.startsWith("block_of_")) n = n.substring("block_of_".length()) + "_block";
