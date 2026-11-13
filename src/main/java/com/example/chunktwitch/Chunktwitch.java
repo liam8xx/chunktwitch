@@ -72,6 +72,9 @@ static final ServerBossEvent BAR = new ServerBossEvent(
     static int lastQueueSize = -1;
     static final Map<UUID, String> LAST_CHUNK = new HashMap<>();
     static final int PLACE_FLAGS = 2 | 16 | 32 | 512;
+    static volatile boolean canChat = false;
+    static volatile OutputStream currentOut = null;
+    static volatile String chatChannel = null;
 
 @Override
 public void onInitialize() {
