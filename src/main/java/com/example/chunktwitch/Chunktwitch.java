@@ -30,6 +30,8 @@ import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.ChatFormatting;
+import net.minecraft.network.chat.ClickEvent;
 
 import java.io.*;
 import java.net.Socket;
@@ -411,8 +413,7 @@ static String[] deviceLogin() throws Exception {
     long expires = d.has("expires_in") ? d.get("expires_in").getAsLong() : 600;
     long deadline = System.currentTimeMillis() + expires * 1000L;
 
-    tell("[ChunkTwitch] To log in, open this link and click Authorize: " + uri);
-    tell("[ChunkTwitch] Your code is " + userCode + " (only needed if Twitch asks for it)");
+    tellLink(uri);
     try {
         if (java.awt.Desktop.isDesktopSupported()
                 && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
@@ -442,6 +443,20 @@ static String[] deviceLogin() throws Exception {
     return null;
 }
 
+static void tellLink(String uri) {
+    System.out.println("[ChunkTwitch] Login link: " + uri);
+    MinecraftServer s = SERVER;
+    if (s == null) return;
+    s.execute(() -> {
+        Component link = Component.literal("[Click here to log in to Twitch]")
+                .withStyle(style -> style
+                        .withClickEvent(new ClickEvent.OpenUrl(URI.create(uri)))
+                        .withColor(ChatFormatting.AQUA)
+                        .withUnderlined(true));
+        s.getPlayerList().broadcastSystemMessage(Component.literal("[ChunkTwitch] ").append(link), false);
+    });
+}
+    
 static void startConnect() {
     Thread t = new Thread(() -> {
         try {
@@ -555,4 +570,53 @@ static Block resolveBlock(String text) {
 static boolean isSafe(Block b) {
     return true;
 }
+
+    static void say(String message) {
+    OutputStream out = currentOut;
+    String chan = chatChannel;
+    if (!canChat || out == null || chan == null) return;
+    try {
+        send(out, "PRIVMSG #" + chan + " :" + message);
+    } catch (IOException e) {
+        System.err.println("[ChunkTwitch] could not send chat message: " + e);
+    }
+}
+
+static String prettyName(Block b) {
+    String path = BuiltInRegistries.BLOCK.getKey(b).getPath();
+    StringBuilder sb = new StringBuilder();
+    for (String w : path.split("_")) {
+        if (w.isEmpty()) continue;
+        if (sb.length() > 0) sb.append(' ');
+        sb.append(Character.toUpperCase(w.charAt(0))).append(w.substring(1));
+    }
+    return sb.toString();
+}
+
+static void handleChat(String user, String raw) {
+    user = user.toLowerCase(Locale.ROOT);
+
+    // one chunk in the queue per viewer
+    for (Entry q : QUEUE) {
+        if (q.user().equals(user)) {
+            say("@" + user + " You already have a chunk in the queue, please wait until it is used to claim another chunk");
+            return;
+        }
+    }
+
+    String text = raw.trim().toLowerCase(Locale.ROOT);
+    if (text.isEmpty() || !text.matches("[a-z0-9_ ]+")) return;
+
+    Block block = resolveBlock(text);
+    if (block == null) return;
+
+    QUEUE.add(new Entry(user, block));
+    int position = QUEUE.size();
+    int claimed = SCORES.getOrDefault(user, 0);
+    say("@" + user + " you chose " + prettyName(block) + " as a chunk. Position in queue: "
+            + position + " | Chunks Claimed: " + claimed);
+}
+
+    static final Map<String, Integer> SCORES = new java.util.concurrent.ConcurrentHashMap<>();
+    
 }
