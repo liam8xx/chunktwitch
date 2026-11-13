@@ -1,12 +1,5 @@
 package com.example.chunktwitch;
 
-import com.google.gson.JsonObject;
-import com.google.gson.JsonParser;
-import java.net.URI;
-import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.api.ModInitializer;
@@ -30,8 +23,6 @@ import net.minecraft.world.level.storage.LevelResource;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.ChatFormatting;
-import net.minecraft.network.chat.ClickEvent;
 
 import java.io.*;
 import java.net.Socket;
@@ -83,21 +74,21 @@ public void onInitialize() {
     CommandRegistrationCallback.EVENT.register((dispatcher, registryAccess, environment) ->
             dispatcher.register(Commands.literal("chunktwitch")
                     .then(Commands.literal("connect")
-                            .executes(ctx -> {
-                                SERVER = ctx.getSource().getServer();
-                                ctx.getSource().sendSuccess(
-                                        () -> Component.literal("Connecting to Twitch..."), false);
-                                startConnect();
-                                return 1;
-                            }))
+                            .then(Commands.argument("channel", StringArgumentType.word())
+                                    .executes(ctx -> {
+                                        String channel = StringArgumentType.getString(ctx, "channel");
+                                        saveChannel(channel);
+                                        startTwitch(channel);
+                                        ctx.getSource().sendSuccess(
+                                                () -> Component.literal("Connecting to Twitch chat: #" + channel), false);
+                                        return 1;
+                                    })))
                     .then(Commands.literal("disconnect")
                             .executes(ctx -> {
                                 generation++;
                                 closeSocket();
-                                canChat = false;
-                                try { Files.deleteIfExists(authFile()); } catch (IOException ignored) {}
                                 ctx.getSource().sendSuccess(
-                                        () -> Component.literal("Disconnected from Twitch and removed the saved login."), false);
+                                        () -> Component.literal("Disconnected from Twitch chat."), false);
                                 return 1;
                             }))
                     .then(Commands.literal("clear")
@@ -121,7 +112,7 @@ public void onInitialize() {
 
     ServerTickEvents.END_SERVER_TICK.register(this::onTick);
 }
-
+    
     // ---------------------------------------------------------------- server
 
     void onServerStarted(MinecraftServer server) {
@@ -147,12 +138,13 @@ public void onInitialize() {
         runCommand(server, "scoreboard objectives modify chunks displayname \"Chunks Owned\"");
         runCommand(server, "scoreboard objectives setdisplay sidebar chunks");
 
-        SERVER = server;
         QUEUE.clear();
         lastQueueSize = -1;
 
-        if (Files.exists(authFile())) startConnect(); // reconnect automatically if already logged in
-        }
+        String channel = loadChannel();
+        if (channel != null) startTwitch(channel);
+        
+    }
     
 void onTick(MinecraftServer server) {
     int size = QUEUE.size();
@@ -310,168 +302,7 @@ void runQuiet(MinecraftServer server, String command) {
 
     // ---------------------------------------------------------------- twitch
 
-    static final String CLIENT_ID = "ywbod558j3ufwcas8rqrpcasgf16qo";
-    static final String SCOPES = "chat:read chat:edit";
-    static final String DEVICE_URL = "https://id.twitch.tv/oauth2/device";
-    static final String TOKEN_URL = "https://id.twitch.tv/oauth2/token";
-    static final String VALIDATE_URL = "https://id.twitch.tv/oauth2/validate";
-    static final HttpClient HTTP = HttpClient.newHttpClient();
     static volatile MinecraftServer SERVER = null;
-
-static String enc(String s) {
-    return URLEncoder.encode(s, StandardCharsets.UTF_8);
-}
-
-static Path authFile() {
-    return FabricLoader.getInstance().getConfigDir().resolve("chunktwitch-auth.properties");
-}
-
-static void tell(String msg) {
-    MinecraftServer s = SERVER;
-    System.out.println(msg);
-    if (s == null) return;
-    s.execute(() -> s.getPlayerList().broadcastSystemMessage(Component.literal(msg), false));
-}
-
-static JsonObject post(String url, String form) throws Exception {
-    HttpRequest req = HttpRequest.newBuilder(URI.create(url))
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .POST(HttpRequest.BodyPublishers.ofString(form))
-            .build();
-    HttpResponse<String> res = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-    JsonObject o;
-    try {
-        o = JsonParser.parseString(res.body()).getAsJsonObject();
-    } catch (Exception e) {
-        o = new JsonObject();
-    }
-    o.addProperty("_http", res.statusCode());
-    return o;
-}
-
-static Properties readAuth() {
-    Properties p = new Properties();
-    try (InputStream in = Files.newInputStream(authFile())) {
-        p.load(in);
-    } catch (IOException ignored) {}
-    return p;
-}
-
-static void saveTokens(JsonObject r) {
-    Properties p = readAuth();
-    p.setProperty("access_token", r.get("access_token").getAsString());
-    if (r.has("refresh_token")) p.setProperty("refresh_token", r.get("refresh_token").getAsString());
-    try (OutputStream out = Files.newOutputStream(authFile())) {
-        p.store(out, "ChunkTwitch login - keep private, do not share or show on stream");
-    } catch (IOException e) {
-        System.err.println("[ChunkTwitch] could not save login: " + e);
-    }
-}
-
-/** returns the account's login name, or null if the token is no good */
-static String validate(String token) throws Exception {
-    HttpRequest req = HttpRequest.newBuilder(URI.create(VALIDATE_URL))
-            .header("Authorization", "OAuth " + token)
-            .GET().build();
-    HttpResponse<String> res = HTTP.send(req, HttpResponse.BodyHandlers.ofString());
-    if (res.statusCode() != 200) return null;
-    JsonObject o = JsonParser.parseString(res.body()).getAsJsonObject();
-    return o.has("login") ? o.get("login").getAsString().toLowerCase(Locale.ROOT) : null;
-}
-
-/** uses the saved login, refreshing it if needed. Returns {login, token}, or null if a new login is required. */
-static synchronized String[] ensureLogin() throws Exception {
-    Properties p = readAuth();
-    String access = p.getProperty("access_token");
-    String refresh = p.getProperty("refresh_token");
-
-    if (access != null) {
-        String login = validate(access);
-        if (login != null) return new String[] { login, access };
-    }
-    if (refresh == null) return null;
-
-    JsonObject r = post(TOKEN_URL, "client_id=" + enc(CLIENT_ID)
-            + "&grant_type=refresh_token&refresh_token=" + enc(refresh));
-    if (!r.has("access_token")) return null;
-    saveTokens(r);
-    String token = r.get("access_token").getAsString();
-    String login = validate(token);
-    return login == null ? null : new String[] { login, token };
-}
-
-static String[] deviceLogin() throws Exception {
-    JsonObject d = post(DEVICE_URL, "client_id=" + enc(CLIENT_ID) + "&scopes=" + enc(SCOPES));
-    if (!d.has("device_code")) {
-        tell("[ChunkTwitch] Twitch refused the login request (check the Client ID): " + d);
-        return null;
-    }
-    String deviceCode = d.get("device_code").getAsString();
-    String userCode = d.get("user_code").getAsString();
-    String uri = d.get("verification_uri").getAsString();
-    int interval = d.has("interval") ? d.get("interval").getAsInt() : 5;
-    long expires = d.has("expires_in") ? d.get("expires_in").getAsLong() : 600;
-    long deadline = System.currentTimeMillis() + expires * 1000L;
-
-    tellLink(uri);
-    try {
-        if (java.awt.Desktop.isDesktopSupported()
-                && java.awt.Desktop.getDesktop().isSupported(java.awt.Desktop.Action.BROWSE)) {
-            java.awt.Desktop.getDesktop().browse(URI.create(uri));
-        }
-    } catch (Throwable ignored) {}
-
-    while (System.currentTimeMillis() < deadline) {
-        Thread.sleep(interval * 1000L);
-        JsonObject r = post(TOKEN_URL, "client_id=" + enc(CLIENT_ID)
-                + "&scopes=" + enc(SCOPES)
-                + "&device_code=" + enc(deviceCode)
-                + "&grant_type=" + enc("urn:ietf:params:oauth:grant-type:device_code"));
-        if (r.has("access_token")) {
-            saveTokens(r);
-            String token = r.get("access_token").getAsString();
-            String login = validate(token);
-            return login == null ? null : new String[] { login, token };
-        }
-        String msg = r.has("message") ? r.get("message").getAsString() : "";
-        if (msg.equals("authorization_pending")) continue;
-        if (msg.equals("slow_down")) { interval += 5; continue; }
-        tell("[ChunkTwitch] Login stopped: " + msg);
-        return null;
-    }
-    tell("[ChunkTwitch] Login timed out. Run /chunktwitch connect to try again.");
-    return null;
-}
-
-static void tellLink(String uri) {
-    System.out.println("[ChunkTwitch] Login link: " + uri);
-    MinecraftServer s = SERVER;
-    if (s == null) return;
-    s.execute(() -> {
-        Component link = Component.literal("[Click here to log in to Twitch]")
-                .withStyle(style -> style
-                        .withClickEvent(new ClickEvent.OpenUrl(URI.create(uri)))
-                        .withColor(ChatFormatting.AQUA)
-                        .withUnderlined(true));
-        s.getPlayerList().broadcastSystemMessage(Component.literal("[ChunkTwitch] ").append(link), false);
-    });
-}
-    
-static void startConnect() {
-    Thread t = new Thread(() -> {
-        try {
-            String[] login = ensureLogin();
-            if (login == null) login = deviceLogin();
-            if (login == null) return;
-            tell("[ChunkTwitch] Logged in to Twitch as " + login[0] + ". Listening to #" + login[0] + ".");
-            startTwitch();
-        } catch (Exception e) {
-            tell("[ChunkTwitch] Twitch login failed: " + e.getMessage());
-        }
-    }, "chunktwitch-login");
-    t.setDaemon(true);
-    t.start();
-}
     
     static void closeSocket() {
         Socket s = currentSocket;
@@ -480,47 +311,24 @@ static void startConnect() {
         }
     }
 
-    static void startTwitch() {
+static void startTwitch(String channel) {
     closeSocket();
     final int gen = ++generation;
+    final String chan = channel.toLowerCase(Locale.ROOT);
 
     Thread t = new Thread(() -> {
         while (gen == generation) {
-            canChat = false;
-            String[] login;
-            try {
-                login = ensureLogin(); // refreshes the token on every reconnect
-            } catch (Exception e) {
-                try { Thread.sleep(5000); } catch (InterruptedException ignored) { return; }
-                continue;
-            }
-            if (login == null) {
-                tell("[ChunkTwitch] Your Twitch login has expired. Type /chunktwitch connect to log in again.");
-                return;
-            }
-            final String chan = login[0];
-
             try (Socket socket = new Socket("irc.chat.twitch.tv", 6667)) {
                 currentSocket = socket;
                 BufferedReader in = new BufferedReader(
                         new InputStreamReader(socket.getInputStream(), StandardCharsets.UTF_8));
                 OutputStream out = socket.getOutputStream();
-                currentOut = out;
-                chatChannel = chan;
-
-                send(out, "PASS oauth:" + login[1]);
-                send(out, "NICK " + chan);
+                send(out, "NICK justinfan" + (10000 + new Random().nextInt(80000)));
                 send(out, "JOIN #" + chan);
+                System.out.println("[ChunkTwitch] connected to #" + chan);
 
                 String line;
                 while (gen == generation && (line = in.readLine()) != null) {
-                    if (line.contains(" 001 ")) {
-                        canChat = true;
-                        System.out.println("[ChunkTwitch] chat login OK, replies enabled");
-                    }
-                    if (line.contains("Login authentication failed") || line.contains("Improperly formatted auth")) {
-                        System.err.println("[ChunkTwitch] Twitch rejected the login: " + line);
-                    }
                     if (line.startsWith("PING")) {
                         send(out, "PONG :tmi.twitch.tv");
                         continue;
@@ -531,8 +339,6 @@ static void startConnect() {
             } catch (IOException e) {
                 if (gen == generation) System.err.println("[ChunkTwitch] twitch connection lost: " + e);
             }
-            canChat = false;
-            currentOut = null;
             if (gen != generation) break;
             try { Thread.sleep(5000); } catch (InterruptedException ignored) { break; }
         }
@@ -541,10 +347,10 @@ static void startConnect() {
     t.start();
 }
 
-    static void send(OutputStream out, String line) throws IOException {
-        out.write((line + "\r\n").getBytes(StandardCharsets.UTF_8));
-        out.flush();
-    }
+static void send(OutputStream out, String line) throws IOException {
+    out.write((line + "\r\n").getBytes(StandardCharsets.UTF_8));
+    out.flush();
+}
 
 static Block resolveBlock(String text) {
     String n = text.replace(' ', '_');
@@ -561,38 +367,22 @@ static boolean isSafe(Block b) {
     return true;
 }
 
-    static void say(String message) {
-    OutputStream out = currentOut;
-    String chan = chatChannel;
-    if (!canChat || out == null || chan == null) return;
-    try {
-        send(out, "PRIVMSG #" + chan + " :" + message);
-    } catch (IOException e) {
-        System.err.println("[ChunkTwitch] could not send chat message: " + e);
-    }
-}
-
-static String prettyName(Block b) {
-    String path = BuiltInRegistries.BLOCK.getKey(b).getPath();
-    StringBuilder sb = new StringBuilder();
-    for (String w : path.split("_")) {
-        if (w.isEmpty()) continue;
-        if (sb.length() > 0) sb.append(' ');
-        sb.append(Character.toUpperCase(w.charAt(0))).append(w.substring(1));
-    }
-    return sb.toString();
-}
-
 static void handleChat(String user, String raw) {
     user = user.toLowerCase(Locale.ROOT);
 
-    // one chunk in the queue per viewer
+    // one chunk in the queue per viewer (silently ignored)
     for (Entry q : QUEUE) {
-        if (q.user().equals(user)) {
-            say("@" + user + " You already have a chunk in the queue, please wait until it is used to claim another chunk");
-            return;
-        }
+        if (q.user().equals(user)) return;
     }
+
+    String text = raw.trim().toLowerCase(Locale.ROOT);
+    if (text.isEmpty() || !text.matches("[a-z0-9_ ]+")) return;
+
+    Block block = resolveBlock(text);
+    if (block == null) return;
+
+    QUEUE.add(new Entry(user, block));
+}
 
     String text = raw.trim().toLowerCase(Locale.ROOT);
     if (text.isEmpty() || !text.matches("[a-z0-9_ ]+")) return;
