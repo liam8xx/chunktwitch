@@ -160,7 +160,7 @@ void onTick(MinecraftServer server) {
         boolean overworld = level.dimension().equals(Level.OVERWORLD);
         int surfaceAtPlayer = level.getHeight(
                 Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, player.getBlockX(), player.getBlockZ());
-        boolean underground = overworld && player.getBlockY() < surfaceAtPlayer;
+        boolean underground = false;
 
         fillChunk(level, cx, cz, e.block());
         DONE.add(key);
@@ -197,36 +197,16 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
     BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
     int minY = level.getMinY();
     int maxY = level.getMaxY();
-    boolean overworld = level.dimension().equals(Level.OVERWORLD);
 
-    // Nether/End: keep a 2-block pocket where each player stands, since they aren't teleported out
-    Set<Long> keepFree = new HashSet<>();
-    if (!overworld) {
-        for (ServerPlayer p : level.players()) {
-            if ((p.getBlockX() >> 4) == cx && (p.getBlockZ() >> 4) == cz) {
-                keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY(), p.getBlockZ()));
-                keepFree.add(BlockPos.asLong(p.getBlockX(), p.getBlockY() + 1, p.getBlockZ()));
-            }
-        }
-    }
-
-    for (int x = cx * 16; x < cx * 16 + 16; x++) {
-        for (int z = cz * 16; z < cz * 16 + 16; z++) {
-            int surface = level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, x, z);
-            for (int y = minY; y <= maxY; y++) {
+    for (int y = minY; y <= maxY; y++) {
+        for (int x = cx * 16; x < cx * 16 + 16; x++) {
+            for (int z = cz * 16; z < cz * 16 + 16; z++) {
                 pos.set(x, y, z);
                 BlockState current = level.getBlockState(pos);
-                if (current.is(Blocks.BEDROCK)) continue;
-                if (keepFree.contains(pos.asLong())) continue;
 
-                // below the ground: fill everything, caves and air pockets included
-                if (y < surface) {
-                    level.setBlock(pos, state, PLACE_FLAGS);
-                    continue;
-                }
-
-                // at or above the ground: air is never changed
+                // air is never changed, in any dimension
                 if (current.isAir()) continue;
+                if (current.is(Blocks.BEDROCK)) continue;
 
                 Block cb = current.getBlock();
                 boolean solid = current.isCollisionShapeFullBlock(
@@ -236,6 +216,8 @@ void fillChunk(ServerLevel level, int cx, int cz, Block block) {
                         || cb instanceof net.minecraft.world.level.block.FenceBlock;
                 boolean fluid = !current.getFluidState().isEmpty();
 
+                // blocks, slabs, stairs, fences and fluids become the viewer's block;
+                // torches, plants, fire, leaf litter etc. vanish
                 level.setBlock(pos, (solid || fluid) ? state : air, PLACE_FLAGS);
             }
         }
