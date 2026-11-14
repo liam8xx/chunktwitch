@@ -67,6 +67,8 @@ public class Chunktwitch implements ModInitializer {
     static volatile Socket currentSocket = null;
     static Path donePath = null;
     static int lastQueueSize = -1;
+    static final Map<String, Integer> SCORES = new HashMap<>();
+    static Path scoresPath = null;
 
     // ================================================================ setup
 
@@ -134,9 +136,13 @@ public class Chunktwitch implements ModInitializer {
         // scoreboard: create it (fails quietly if it already exists), then show it
         runQuiet(server, "scoreboard objectives add chunks dummy \"Chunks Owned\"");
         runCommand(server, "scoreboard objectives modify chunks displayname \"Chunks Owned\"");
-        // reset any custom number format saved in the world, so the numbers show normally (red, on the right)
-        runQuiet(server, "scoreboard objectives modify chunks numberformat");
+        runQuiet(server, "scoreboard objectives modify chunks numberformat blank"); // hide the number column; the count is in the name now
         runCommand(server, "scoreboard objectives setdisplay sidebar chunks");
+
+        loadScores(server);
+        for (Map.Entry<String, Integer> en : SCORES.entrySet()) {
+            updateBoard(server, en.getKey(), en.getValue());
+        }
 
         QUEUE.clear();
         lastQueueSize = -1;
@@ -172,7 +178,9 @@ public class Chunktwitch implements ModInitializer {
             fillChunk(level, cx, cz, e.block());
             DONE.add(key);
             appendDone(key);
-            runCommand(server, "scoreboard players add " + e.user() + " chunks 1");
+            int total = SCORES.merge(e.user(), 1, Integer::sum);
+            saveScores();
+            updateBoard(server, e.user(), total);
             announce(server, player, e.user(), e.block());
         }
     }
@@ -239,6 +247,50 @@ public class Chunktwitch implements ModInitializer {
             server.getCommands().getDispatcher().execute(command, server.createCommandSourceStack());
         } catch (Exception ignored) {}
     }
+
+    static String teamName(String user) {
+    // short, safe team id (Twitch names can be long)
+    return "c" + Integer.toHexString(user.hashCode());
+}
+
+void updateBoard(MinecraftServer server, String user, int total) {
+    String team = teamName(user);
+    runQuiet(server, "team add " + team);
+    runQuiet(server, "team join " + team + " " + user);
+    runCommand(server, "team modify " + team + " suffix {\"text\":\" - " + total + "\",\"color\":\"red\"}");
+    runQuiet(server, "scoreboard players set " + user + " chunks " + total);
+}
+
+void loadScores(MinecraftServer server) {
+    SCORES.clear();
+    scoresPath = server.getWorldPath(LevelResource.ROOT).resolve("chunktwitch_scores.txt");
+    try {
+        if (Files.exists(scoresPath)) {
+            for (String line : Files.readAllLines(scoresPath)) {
+                int i = line.lastIndexOf('=');
+                if (i <= 0) continue;
+                try {
+                    SCORES.put(line.substring(0, i), Integer.parseInt(line.substring(i + 1).trim()));
+                } catch (NumberFormatException ignored) {}
+            }
+        }
+    } catch (IOException e) {
+        System.err.println("[ChunkTwitch] could not read scores: " + e);
+    }
+}
+
+void saveScores() {
+    if (scoresPath == null) return;
+    StringBuilder sb = new StringBuilder();
+    for (Map.Entry<String, Integer> en : SCORES.entrySet()) {
+        sb.append(en.getKey()).append('=').append(en.getValue()).append('\n');
+    }
+    try {
+        Files.writeString(scoresPath, sb.toString());
+    } catch (IOException e) {
+        System.err.println("[ChunkTwitch] could not save scores: " + e);
+    }
+}
 
     // ================================================================ files
 
